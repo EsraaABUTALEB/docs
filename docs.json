@@ -48,16 +48,12 @@
         ]
       },
       {
-        "tab": "Users Service",
-        "openapi": "/openapi/users-service.json"
+        "tab": "Checkout",
+        "openapi": "/openapi/checkout-service.json"
       },
       {
-        "tab": "Orders Service",
-        "openapi": "/openapi/orders-service.json"
-      },
-      {
-        "tab": "Products Service",
-        "openapi": "/openapi/products-service.json"
+        "tab": "Payments",
+        "openapi": "/openapi/payments-service.json"
       }
     ],
     "global": {

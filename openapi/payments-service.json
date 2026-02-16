@@ -1,0 +1,455 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Payments Service",
+    "description": "Handles the full payment lifecycle for ecommerce transactions: authorization, capture, void, refund, and reversal.\n\n## Payment Flow\n\n```\nCheckout Session → Payment Intent (authorized) → Capture → Settled\n                                               ↘ Void    → Cancelled\nSettled Payment → Refund  → Refunded\nSettled Payment → Reversal → Reversed (same-day only)\n```",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8082",
+      "description": "Local dev"
+    }
+  ],
+  "tags": [
+    { "name": "Payment Intents", "description": "Authorize and track payment intents" },
+    { "name": "Capture", "description": "Capture authorized funds" },
+    { "name": "Void", "description": "Cancel an authorized payment before capture" },
+    { "name": "Refund", "description": "Return funds to the customer after capture" },
+    { "name": "Reversal", "description": "Same-day reversal of a settled payment" }
+  ],
+  "paths": {
+    "/payments": {
+      "get": {
+        "tags": ["Payment Intents"],
+        "summary": "List payment intents",
+        "description": "Returns a paginated list of payment intents, optionally filtered by status or checkout session.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["requires_capture", "captured", "voided", "refunded", "reversed", "failed"] },
+            "description": "Filter by payment status"
+          },
+          { "name": "sessionId", "in": "query", "schema": { "type": "string" }, "description": "Filter by checkout session ID" },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20 } },
+          { "name": "after", "in": "query", "schema": { "type": "string" }, "description": "Pagination cursor" }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of payment intents",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/PaymentIntent" } },
+                    "hasMore": { "type": "boolean" },
+                    "nextCursor": { "type": "string", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{paymentId}": {
+      "get": {
+        "tags": ["Payment Intents"],
+        "summary": "Retrieve payment intent",
+        "description": "Returns full details of a payment intent including status, amounts, and transaction history.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" }, "example": "pi_live_abc123" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Payment intent details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentIntent" }
+              }
+            }
+          },
+          "404": { "description": "Payment intent not found" }
+        }
+      }
+    },
+    "/payments/{paymentId}/capture": {
+      "post": {
+        "tags": ["Capture"],
+        "summary": "Capture payment",
+        "description": "Captures authorized funds for a payment intent. The payment must be in `requires_capture` status.\n\nYou can capture the full amount or a partial amount (partial capture). Any uncaptured amount is automatically released back to the customer.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" }, "example": "pi_live_abc123" }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CaptureRequest" },
+              "example": {
+                "amountToCapture": 9998,
+                "statementDescriptor": "YOURSTORE ORDER #1042"
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment captured successfully",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentIntent" }
+              }
+            }
+          },
+          "409": {
+            "description": "Payment cannot be captured — already captured, voided, or in an invalid state",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Capture amount exceeds authorized amount",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{paymentId}/void": {
+      "post": {
+        "tags": ["Void"],
+        "summary": "Void payment",
+        "description": "Cancels an authorized payment intent **before** it is captured. Releases the held funds back to the customer immediately.\n\nA void can only be performed when the payment status is `requires_capture`. Once captured, use Refund instead.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": ["customer_request", "fraud", "duplicate", "order_cancelled"],
+                    "example": "order_cancelled"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment voided",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/PaymentIntent" }
+              }
+            }
+          },
+          "409": {
+            "description": "Payment has already been captured or voided",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{paymentId}/refunds": {
+      "post": {
+        "tags": ["Refund"],
+        "summary": "Create refund",
+        "description": "Issues a refund for a captured payment. Supports full or partial refunds. Multiple partial refunds can be issued against a single payment up to the total captured amount.\n\nRefunds typically take 5–10 business days to appear on the customer's statement.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/RefundRequest" },
+              "example": {
+                "amount": 4999,
+                "reason": "customer_request",
+                "metadata": {
+                  "orderId": "ORD-9876",
+                  "agentId": "agent_007"
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Refund initiated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Refund" }
+              }
+            }
+          },
+          "409": {
+            "description": "Refund amount exceeds available balance or payment is not refundable",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      },
+      "get": {
+        "tags": ["Refund"],
+        "summary": "List refunds for a payment",
+        "description": "Returns all refunds issued against a payment intent.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "List of refunds",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/Refund" } },
+                    "totalRefunded": { "type": "integer", "description": "Total amount refunded so far in smallest currency unit" }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/payments/{paymentId}/refunds/{refundId}": {
+      "get": {
+        "tags": ["Refund"],
+        "summary": "Retrieve refund",
+        "description": "Returns details of a specific refund.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" } },
+          { "name": "refundId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Refund details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Refund" }
+              }
+            }
+          },
+          "404": { "description": "Refund not found" }
+        }
+      }
+    },
+    "/payments/{paymentId}/reversal": {
+      "post": {
+        "tags": ["Reversal"],
+        "summary": "Reverse payment",
+        "description": "Performs a same-day reversal of a settled payment. Unlike a refund, a reversal cancels the transaction entirely before it posts to the customer's account — no funds movement occurs on the customer's side.\n\n**Important:** Reversals are only available on the same calendar day as the original capture (before end-of-day settlement). After settlement, use Refund instead.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "paymentId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": {
+                "type": "object",
+                "required": ["reason"],
+                "properties": {
+                  "reason": {
+                    "type": "string",
+                    "enum": ["duplicate_transaction", "fraud_suspected", "customer_request", "processing_error"],
+                    "example": "duplicate_transaction"
+                  },
+                  "notes": {
+                    "type": "string",
+                    "description": "Internal notes for your records",
+                    "example": "Duplicate order submitted by customer"
+                  }
+                }
+              }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Payment reversed",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/Reversal" }
+              }
+            }
+          },
+          "409": {
+            "description": "Reversal window has closed (payment already settled past end-of-day) — use Refund instead",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          },
+          "422": {
+            "description": "Payment is not eligible for reversal (already refunded or reversed)",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/ErrorResponse" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "PaymentIntent": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "pi_live_abc123" },
+          "object": { "type": "string", "example": "payment_intent" },
+          "status": {
+            "type": "string",
+            "enum": ["requires_capture", "captured", "voided", "refunded", "partially_refunded", "reversed", "failed"],
+            "example": "requires_capture"
+          },
+          "amount": { "type": "integer", "description": "Authorized amount in smallest currency unit", "example": 9998 },
+          "amountCaptured": { "type": "integer", "example": 0 },
+          "amountRefunded": { "type": "integer", "example": 0 },
+          "currency": { "type": "string", "example": "USD" },
+          "checkoutSessionId": { "type": "string", "example": "cs_live_a1b2c3d4e5" },
+          "paymentMethod": { "$ref": "#/components/schemas/PaymentMethodSummary" },
+          "statementDescriptor": { "type": "string", "example": "YOURSTORE ORDER #1042" },
+          "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+          "refunds": { "type": "array", "items": { "$ref": "#/components/schemas/Refund" } },
+          "reversal": { "$ref": "#/components/schemas/Reversal", "nullable": true },
+          "capturedAt": { "type": "string", "format": "date-time", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CaptureRequest": {
+        "type": "object",
+        "properties": {
+          "amountToCapture": {
+            "type": "integer",
+            "description": "Amount to capture in smallest currency unit. Omit to capture the full authorized amount.",
+            "example": 9998
+          },
+          "statementDescriptor": {
+            "type": "string",
+            "maxLength": 22,
+            "description": "Text that appears on the customer's bank statement",
+            "example": "YOURSTORE ORDER #1042"
+          }
+        }
+      },
+      "RefundRequest": {
+        "type": "object",
+        "required": ["reason"],
+        "properties": {
+          "amount": {
+            "type": "integer",
+            "description": "Amount to refund in smallest currency unit. Omit to refund the full captured amount.",
+            "example": 4999
+          },
+          "reason": {
+            "type": "string",
+            "enum": ["customer_request", "duplicate", "fraudulent", "product_not_received", "product_unsatisfactory"],
+            "example": "customer_request"
+          },
+          "metadata": {
+            "type": "object",
+            "additionalProperties": { "type": "string" }
+          }
+        }
+      },
+      "Refund": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "re_live_xyz789" },
+          "object": { "type": "string", "example": "refund" },
+          "paymentIntentId": { "type": "string", "example": "pi_live_abc123" },
+          "amount": { "type": "integer", "example": 4999 },
+          "currency": { "type": "string", "example": "USD" },
+          "status": { "type": "string", "enum": ["pending", "succeeded", "failed", "cancelled"], "example": "pending" },
+          "reason": { "type": "string", "example": "customer_request" },
+          "metadata": { "type": "object", "additionalProperties": { "type": "string" } },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "Reversal": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "rv_live_abc456" },
+          "object": { "type": "string", "example": "reversal" },
+          "paymentIntentId": { "type": "string", "example": "pi_live_abc123" },
+          "amount": { "type": "integer", "description": "Full payment amount — reversals are always full", "example": 9998 },
+          "currency": { "type": "string", "example": "USD" },
+          "status": { "type": "string", "enum": ["pending", "succeeded", "failed"], "example": "succeeded" },
+          "reason": { "type": "string", "example": "duplicate_transaction" },
+          "notes": { "type": "string", "nullable": true },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "PaymentMethodSummary": {
+        "type": "object",
+        "properties": {
+          "type": { "type": "string", "enum": ["card", "bank_transfer", "wallet"], "example": "card" },
+          "card": {
+            "type": "object",
+            "nullable": true,
+            "properties": {
+              "brand": { "type": "string", "example": "visa" },
+              "last4": { "type": "string", "example": "4242" },
+              "expMonth": { "type": "integer", "example": 12 },
+              "expYear": { "type": "integer", "example": 2027 }
+            }
+          }
+        }
+      },
+      "ErrorResponse": {
+        "type": "object",
+        "properties": {
+          "error": {
+            "type": "object",
+            "properties": {
+              "code": { "type": "string", "example": "payment_already_captured" },
+              "message": { "type": "string", "example": "This payment has already been captured and cannot be voided." },
+              "docUrl": { "type": "string", "format": "uri" }
+            }
+          }
+        }
+      }
+    }
+  }
+}

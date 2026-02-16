@@ -1,0 +1,299 @@
+{
+  "openapi": "3.0.3",
+  "info": {
+    "title": "Checkout Service",
+    "description": "Manages checkout sessions for ecommerce payment flows. A checkout session represents a customer's intent to purchase and holds cart, pricing, and payment method details before a payment is submitted.",
+    "version": "1.0.0"
+  },
+  "servers": [
+    {
+      "url": "http://localhost:8081",
+      "description": "Local dev"
+    }
+  ],
+  "tags": [
+    { "name": "Sessions", "description": "Checkout session lifecycle" },
+    { "name": "Line Items", "description": "Items within a checkout session" },
+    { "name": "Shipping", "description": "Shipping address and method selection" }
+  ],
+  "paths": {
+    "/checkout/sessions": {
+      "post": {
+        "tags": ["Sessions"],
+        "summary": "Create checkout session",
+        "description": "Initializes a new checkout session. Returns a session ID and a hosted checkout URL the customer can be redirected to, or a client secret for embedded flows.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/CreateSessionRequest" },
+              "example": {
+                "currency": "USD",
+                "customer": {
+                  "email": "customer@example.com",
+                  "name": "Jane Doe"
+                },
+                "lineItems": [
+                  {
+                    "name": "Widget Pro",
+                    "unitAmount": 4999,
+                    "quantity": 2
+                  }
+                ],
+                "successUrl": "https://yourstore.com/order/success?session={CHECKOUT_SESSION_ID}",
+                "cancelUrl": "https://yourstore.com/cart",
+                "paymentMethods": ["card", "bank_transfer"],
+                "mode": "payment"
+              }
+            }
+          }
+        },
+        "responses": {
+          "201": {
+            "description": "Checkout session created",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CheckoutSession" }
+              }
+            }
+          },
+          "400": { "description": "Invalid request — missing required fields or invalid currency" },
+          "401": { "description": "Unauthorized — invalid or missing API key" }
+        }
+      },
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "List checkout sessions",
+        "description": "Returns a paginated list of checkout sessions, optionally filtered by status or customer email.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          {
+            "name": "status",
+            "in": "query",
+            "schema": { "type": "string", "enum": ["open", "complete", "expired"] },
+            "description": "Filter by session status"
+          },
+          {
+            "name": "customerEmail",
+            "in": "query",
+            "schema": { "type": "string", "format": "email" },
+            "description": "Filter by customer email"
+          },
+          { "name": "limit", "in": "query", "schema": { "type": "integer", "default": 20, "maximum": 100 } },
+          { "name": "after", "in": "query", "schema": { "type": "string" }, "description": "Cursor for pagination — ID of the last item from the previous page" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Paginated list of sessions",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/CheckoutSession" } },
+                    "hasMore": { "type": "boolean" },
+                    "nextCursor": { "type": "string", "nullable": true }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checkout/sessions/{sessionId}": {
+      "get": {
+        "tags": ["Sessions"],
+        "summary": "Retrieve checkout session",
+        "description": "Returns full details of a checkout session including current status, line items, and any associated payment intent.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" }, "example": "cs_live_a1b2c3d4e5" }
+        ],
+        "responses": {
+          "200": {
+            "description": "Checkout session details",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CheckoutSession" }
+              }
+            }
+          },
+          "404": { "description": "Session not found" }
+        }
+      }
+    },
+    "/checkout/sessions/{sessionId}/expire": {
+      "post": {
+        "tags": ["Sessions"],
+        "summary": "Expire checkout session",
+        "description": "Manually expires an open session. Expired sessions cannot be completed. Use this to invalidate abandoned carts.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Session expired",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CheckoutSession" }
+              }
+            }
+          },
+          "409": { "description": "Session is already complete or expired" }
+        }
+      }
+    },
+    "/checkout/sessions/{sessionId}/line-items": {
+      "get": {
+        "tags": ["Line Items"],
+        "summary": "List session line items",
+        "description": "Returns all line items associated with a checkout session.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "responses": {
+          "200": {
+            "description": "Line items",
+            "content": {
+              "application/json": {
+                "schema": {
+                  "type": "object",
+                  "properties": {
+                    "data": { "type": "array", "items": { "$ref": "#/components/schemas/LineItem" } }
+                  }
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    "/checkout/sessions/{sessionId}/shipping": {
+      "put": {
+        "tags": ["Shipping"],
+        "summary": "Set shipping address",
+        "description": "Attach or update the shipping address for a checkout session. Must be called before the session is completed.",
+        "security": [{ "ApiKeyAuth": [] }],
+        "parameters": [
+          { "name": "sessionId", "in": "path", "required": true, "schema": { "type": "string" } }
+        ],
+        "requestBody": {
+          "required": true,
+          "content": {
+            "application/json": {
+              "schema": { "$ref": "#/components/schemas/ShippingAddress" }
+            }
+          }
+        },
+        "responses": {
+          "200": {
+            "description": "Shipping address updated",
+            "content": {
+              "application/json": {
+                "schema": { "$ref": "#/components/schemas/CheckoutSession" }
+              }
+            }
+          }
+        }
+      }
+    }
+  },
+  "components": {
+    "securitySchemes": {
+      "ApiKeyAuth": {
+        "type": "apiKey",
+        "in": "header",
+        "name": "X-API-Key"
+      }
+    },
+    "schemas": {
+      "CheckoutSession": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "example": "cs_live_a1b2c3d4e5" },
+          "object": { "type": "string", "example": "checkout.session" },
+          "status": { "type": "string", "enum": ["open", "complete", "expired"], "example": "open" },
+          "mode": { "type": "string", "enum": ["payment", "subscription"], "example": "payment" },
+          "currency": { "type": "string", "example": "USD" },
+          "amountTotal": { "type": "integer", "description": "Total in smallest currency unit (e.g. cents)", "example": 9998 },
+          "amountSubtotal": { "type": "integer", "example": 9998 },
+          "amountTax": { "type": "integer", "example": 0 },
+          "customer": { "$ref": "#/components/schemas/Customer" },
+          "lineItems": { "type": "array", "items": { "$ref": "#/components/schemas/LineItem" } },
+          "shippingAddress": { "$ref": "#/components/schemas/ShippingAddress", "nullable": true },
+          "paymentIntentId": { "type": "string", "nullable": true, "example": "pi_live_xyz123" },
+          "paymentMethods": { "type": "array", "items": { "type": "string" }, "example": ["card", "bank_transfer"] },
+          "url": { "type": "string", "format": "uri", "description": "Hosted checkout URL", "example": "https://checkout.yourpayments.com/pay/cs_live_a1b2c3d4e5" },
+          "clientSecret": { "type": "string", "nullable": true, "description": "For embedded checkout flows" },
+          "successUrl": { "type": "string", "format": "uri" },
+          "cancelUrl": { "type": "string", "format": "uri" },
+          "expiresAt": { "type": "string", "format": "date-time" },
+          "createdAt": { "type": "string", "format": "date-time" }
+        }
+      },
+      "CreateSessionRequest": {
+        "type": "object",
+        "required": ["currency", "lineItems", "successUrl", "cancelUrl"],
+        "properties": {
+          "currency": { "type": "string", "example": "USD", "description": "ISO 4217 currency code" },
+          "customer": { "$ref": "#/components/schemas/Customer" },
+          "lineItems": { "type": "array", "minItems": 1, "items": { "$ref": "#/components/schemas/LineItemInput" } },
+          "paymentMethods": { "type": "array", "items": { "type": "string", "enum": ["card", "bank_transfer", "wallet", "buy_now_pay_later"] }, "default": ["card"] },
+          "mode": { "type": "string", "enum": ["payment", "subscription"], "default": "payment" },
+          "successUrl": { "type": "string", "format": "uri" },
+          "cancelUrl": { "type": "string", "format": "uri" },
+          "metadata": { "type": "object", "additionalProperties": { "type": "string" }, "description": "Key-value pairs for your internal reference" },
+          "expiresIn": { "type": "integer", "default": 1800, "description": "Session TTL in seconds (default 30 min)" }
+        }
+      },
+      "LineItem": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string" },
+          "name": { "type": "string", "example": "Widget Pro" },
+          "description": { "type": "string", "nullable": true },
+          "quantity": { "type": "integer", "example": 2 },
+          "unitAmount": { "type": "integer", "description": "Unit price in smallest currency unit", "example": 4999 },
+          "amount": { "type": "integer", "description": "quantity × unitAmount", "example": 9998 },
+          "currency": { "type": "string", "example": "USD" }
+        }
+      },
+      "LineItemInput": {
+        "type": "object",
+        "required": ["name", "unitAmount", "quantity"],
+        "properties": {
+          "name": { "type": "string" },
+          "description": { "type": "string" },
+          "unitAmount": { "type": "integer", "minimum": 1, "description": "Price in smallest currency unit (e.g. 4999 = $49.99)" },
+          "quantity": { "type": "integer", "minimum": 1 },
+          "productId": { "type": "string", "description": "Optional reference to your product catalog" }
+        }
+      },
+      "Customer": {
+        "type": "object",
+        "properties": {
+          "id": { "type": "string", "nullable": true },
+          "email": { "type": "string", "format": "email", "example": "customer@example.com" },
+          "name": { "type": "string", "example": "Jane Doe" },
+          "phone": { "type": "string", "nullable": true }
+        }
+      },
+      "ShippingAddress": {
+        "type": "object",
+        "required": ["line1", "city", "country"],
+        "properties": {
+          "line1": { "type": "string", "example": "123 Main St" },
+          "line2": { "type": "string", "nullable": true },
+          "city": { "type": "string", "example": "New York" },
+          "state": { "type": "string", "example": "NY" },
+          "postalCode": { "type": "string", "example": "10001" },
+          "country": { "type": "string", "description": "ISO 3166-1 alpha-2 country code", "example": "US" }
+        }
+      }
+    }
+  }
+}

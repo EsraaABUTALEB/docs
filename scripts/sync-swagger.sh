@@ -14,9 +14,8 @@ OPENAPI_DIR="$SCRIPT_DIR/../openapi"
 # Format: ["service-filename"]="https://swagger-url"
 # ─────────────────────────────────────────────────────────────
 declare -A SERVICES=(
-  ["users-service"]="https://users-service.dev.yourcompany.com/v3/api-docs"
-  ["orders-service"]="https://orders-service.dev.yourcompany.com/v3/api-docs"
-  ["products-service"]="https://products-service.dev.yourcompany.com/v3/api-docs"
+  ["checkout-service"]="https://checkout-service.dev.yourcompany.com/v3/api-docs"
+  ["payments-service"]="https://payments-service.dev.yourcompany.com/v3/api-docs"
 )
 
 echo "Syncing OpenAPI specs from dev environments..."
