@@ -54,6 +54,10 @@
       {
         "tab": "Orders Service",
         "openapi": "/openapi/orders-service.json"
+      },
+      {
+        "tab": "Products Service",
+        "openapi": "/openapi/products-service.json"
       }
     ],
     "global": {
